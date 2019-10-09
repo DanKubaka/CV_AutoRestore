@@ -31,6 +31,33 @@ function CV-Login {
     return $Result.token
 }
 
+function CV-SubclientProperties {
+    param (
+        $Token,
+        $CSName,
+        $SubclientID
+    )
+    $Hdrs = @{}
+    $Hdrs.Add("Host",$CSName)
+    $Hdrs.Add("Accept","application/xml")
+    $Hdrs.Add("Authtoken",$Token)
+    $Hdrs.Add("limit",0)
+
+    $Api = 'https://' + $CSName + '/webconsole/api'
+    $Uri = $Api + '/Subclient/' + $SubclientID
+
+    $timeTaken = Measure-Command -Expression {
+        $subclientProps = Invoke-RestMethod -SkipCertificateCheck -SslProtocol Tls12 -Headers $Hdrs -Uri $Uri -Method Get
+    }
+    $milliseconds = $timeTaken.TotalMilliseconds
+    $milliseconds = [Math]::Round($milliseconds, 1)
+
+    Write-Debug ("Subclient properties received, it took " + $milliseconds + "ms")
+
+    return $subclientProps
+}
+
+
 function CV-ListSubclients {
     param (
         $Token,
@@ -57,6 +84,10 @@ function CV-ListSubclients {
 
     $subctable = New-Object System.Collections.ArrayList
     foreach ($subc in $clientbrowse.subClientProperties){
+
+        $storagePolicy = CV-SubclientProperties -Token $Token -CSName $CSName -SubclientID $subc.subClientEntity.SubclientID
+        $subc.subClientEntity | Add-Member -NotePropertyName dataBackupStoragePolicy -NotePropertyValue $storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy
+
         $subctable.Add($subc.subClientEntity) | Out-Null
     }
 
