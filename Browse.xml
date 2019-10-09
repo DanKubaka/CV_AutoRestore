@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<databrowse_BrowseRequest>
+
+  <opType>Browse</opType>
+
+  <session/>
+
+  <entity>
+    <subclientName></subclientName>
+    <backupsetName>defaultBackupSet</backupsetName>
+    <instanceName>Azure Resource Manager</instanceName>
+    <appName>Virtual Server</appName>
+    <clientName></clientName>
+  </entity>
+
+  <paths>
+    <path>\</path>
+  </paths>
+
+  <timeRange/>
+
+  <options>
+    <vsDiskBrowse>true</vsDiskBrowse>
+    <skipIndexRestore>false</skipIndexRestore>
+    <instantSend>false</instantSend>
+  </options>
+
+  <mode>
+    <mode>4</mode>
+  </mode>
+
+  <ma/>
+
+  <advOptions>
+    <copyPrecedence>0</copyPrecedence>
+    <advConfig>
+      <extendedConfig>
+        <browseAdvConfigLiveBrowse>
+          <useISCSIMount>false</useISCSIMount>
+        </browseAdvConfigLiveBrowse>
+      </extendedConfig>
+    </advConfig>
+  </advOptions>
+
+  <queries>
+    <type>DATA</type>
+    <queryId>0</queryId>
+    <dataParam>
+      <paging>
+        <firstNode>0</firstNode>
+        <skipNode>0</skipNode>
+        <pageSize>1000</pageSize>
+      </paging>
+      <sortParam>
+        <sortBy>38</sortBy>
+        <sortBy>0</sortBy>
+        <ascending>true</ascending>
+      </sortParam>
+    </dataParam>
+  </queries>
+
+</databrowse_BrowseRequest>
