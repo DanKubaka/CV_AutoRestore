@@ -57,6 +57,31 @@ function CV-SubclientProperties {
     return $subclientProps
 }
 
+function CV-StoragePolicyDetails {
+    param (
+        $Token,
+        $CSName,
+        $StoragePolicyID
+    )
+    $Hdrs = @{}
+    $Hdrs.Add("Host",$CSName)
+    $Hdrs.Add("Accept","application/json")
+    $Hdrs.Add("Content-type","application/json")
+    $Hdrs.Add("Authtoken",$Token)
+    $Hdrs.Add("limit",0)
+    $Api = 'https://' + $CSName + '/webconsole/api'
+    $Uri = $Api + '/V2/StoragePolicy/' + $StoragePolicyID + "?propertyLevel=10"
+
+    $timeTaken = Measure-Command -Expression {
+        $storagePolicyDetails = Invoke-RestMethod -SkipCertificateCheck -SslProtocol Tls12 -Headers $Hdrs -Uri $Uri -Method Get
+    }
+    $milliseconds = $timeTaken.TotalMilliseconds
+    $milliseconds = [Math]::Round($milliseconds, 1)
+
+    Write-Debug ("Storage Policy details received, it took " + $milliseconds + "ms")
+
+    return $storagePolicyDetails
+}
 
 function CV-ListSubclients {
     param (
@@ -86,11 +111,15 @@ function CV-ListSubclients {
     foreach ($subc in $clientbrowse.subClientProperties){
 
         $storagePolicy = CV-SubclientProperties -Token $Token -CSName $CSName -SubclientID $subc.subClientEntity.SubclientID
-        $subc.subClientEntity | Add-Member -NotePropertyName dataBackupStoragePolicy -NotePropertyValue $storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy
 
+        if ($storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy.storagePolicyId){
+            $storagePolicyDetails = CV-StoragePolicyDetails -Token $Token -CSName $CSName -StoragePolicyID $storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy.storagePolicyId
+            $storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy | Add-Member -NotePropertyName copies -NotePropertyValue $storagePolicyDetails.policies.copies
+        }        
+        $subc.subClientEntity | Add-Member -NotePropertyName dataBackupStoragePolicy -NotePropertyValue $storagePolicy.App_GetSubClientPropertiesResponse.subClientProperties.commonProperties.storageDevice.dataBackupStoragePolicy
         $subctable.Add($subc.subClientEntity) | Out-Null
     }
-
+    
     return $subctable
 }
 
@@ -150,7 +179,8 @@ function CV-BrowseVM {
     param (
         $VM,
         $Token,
-        $CSName
+        $CSName,
+        $CopyPrecedence
     )
 
     $Hdrs = @{}
@@ -173,6 +203,8 @@ function CV-BrowseVM {
 
     $xmldoc.databrowse_BrowseRequest.paths.path = $VM.path
 
+    $xmldoc.databrowse_BrowseRequest.advOptions.copyPrecedence = $CopyPrecedence
+
     $timeTaken = Measure-Command -Expression {
         $data = Invoke-RestMethod -SkipCertificateCheck -SslProtocol Tls12 -Headers $Hdrs -Uri $Uri -Method Post -Body $xmldoc
     }
@@ -182,6 +214,133 @@ function CV-BrowseVM {
     Write-Debug ("VM browsed, it took " + $milliseconds + "ms")
 
     return $data.databrowse_BrowseResponseList.browseResponses[0].browseResult.dataResultSet
+}
+
+function PrepareRestoreXML {
+    param (
+        $inputParam,
+        $browseData,
+        $restoreParam
+    )
+    
+    [xml]$restorexml = Get-Content .\VMRestoreTemplate.xml
+
+
+    ##
+    #New (restore) parameters
+    
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.associations.subclientName = $browseData.subclientName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.associations.backupsetName = $browseData.backupsetName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.associations.instanceName = $browseData.instanceName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.associations.appName = $browseData.appName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.associations.clientName = $browseData.vsa
+    
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.backupsetName = $browseData.backupsetName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.instanceName = $browseData.instanceName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.appName = $browseData.appName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.clientName = $browseData.vmName
+    
+    #$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.timeZone = ??
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.destination.destClient.clientName = $restoreParam.proxyName
+    
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.esxServerName = $restoreParam.subscription.$($inputParam.region)
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.guid = $browseData.vmGuid
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.name = $browseData.vmName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.newName = $restoreParam.vmNewName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.esxHost = $restoreParam.resourceGroup
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.Datastore = $restoreParam.datastore
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.vmSize = $browseData.vmSize
+    
+    #for each disk browsed:
+    <#
+    $diskCount = 0;
+    foreach ($file in $thisvmbrowse){
+        if ($file.name -notlike '*.json') { 
+            $diskCount++;
+        }
+    }
+    
+    
+    for ($i=1;$i -lt $diskCount;$i++){
+        $diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks.Clone()
+        $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.AppendChild($diskNode)
+    }
+    #>
+    
+    $diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks.Clone()
+    foreach ($file in $browseData.disks){
+        if ($file.name -notlike '*.json'){
+            $diskNode.name = $file.name
+            $diskNode.datastore = $restoreParam.datastore
+            $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.AppendChild($diskNode) | Out-Null
+            $diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks[0].Clone()
+        }
+    }
+    $diskNodeZero = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks[0]
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.RemoveChild($diskNodeZero) | Out-Null
+    
+    #nics // Static
+    <#
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.name = Restored NIC adress : subscription etc
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkName = Azure Network
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.subnetId = address
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkDisplayName = 
+    
+    #NSG // Static
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupId = NSG_ID
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupName = NSG NAME
+    #>
+    
+    #Managed VM ??
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.restoreAsManagedVM = $browseData.vmManaged
+    
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.instanceName = $browseData.instanceName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.appName = $browseData.appName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.clientName = $browseData.vsa
+    
+    #fileoptions:
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.fileOption.sourceItem = $browseData.path
+    #$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.fileOption.browseFilters = ?? Probably dont use
+    
+    #VM node:
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].browsePath = $browseData.vmName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmGUID = $browseData.vmGuid
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].esxHost = $restoreParam.resourceGroup
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].datastore = $restoreParam.datastore
+    #$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics = Same restored info for every NIC
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmDataStore = $restoreParam.datastore
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmEsxHost = $restoreParam.resourceGroup
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].DisplayName = $browseData.vmName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].diskType = 0
+    
+    $diskBrowseNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[1]
+    
+    #file Nodes
+    foreach ($file in $browseData.disks){
+            $diskBrowseNode.browsePath = $file.displayPath.Substring(1)
+            $diskBrowseNode.vmGUID = $browseData.vmGuid
+    
+            if ($file.name -like '*json'){
+                $diskBrowseNode.vmDataStore = $browseData.vmDataStore
+                $diskBrowseNode.esxHost = ""
+                $diskBrowseNode.datastore = ""
+            }
+            else {
+                $diskBrowseNode.vmDataStore = $restoreParam.datastore
+                $diskBrowseNode.esxHost = $browseData.vmResourceGroup
+                $diskBrowseNode.datastore =  $restoreParam.datastore
+            }
+            $diskBrowseNode.vmEsxHost = $browseData.vmResourceGroup
+            $diskBrowseNode.isDriveNode = 'false'
+            $diskBrowseNode.isMetadataAvaiable = 'true'
+            $diskBrowseNode.DisplayName = $file.displayName
+            $diskBrowseNode.diskType = $file.advancedData.browseMetaData.virtualServerMetaData.diskType
+            $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.AppendChild($diskBrowseNode) | Out-Null
+            $diskBrowseNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[1].Clone()
+    }
+    
+    $restorexml.Save(".\RecreatedXML_BENL.xml")
+
 }
 
 function CV-RestoreVM {
@@ -212,8 +371,6 @@ function CV-RestoreVM {
     return $resp
 }
 
-
-
 $inputParam = @{
     cred = Import-Clixml -Path $HOME\adm.cred
     csName = 'Dancommserve'
@@ -241,12 +398,32 @@ $inputParam = @{
     }
 }
 
+$StartMs = Get-Date
+
 $token = CV-Login -Cred $inputParam.Cred -CSName $inputParam.CSName
 
 $subclients = CV-ListSubclients -Token $token -CSName $inputParam.CSName -VSA $inputParam.vsa.$($inputParam.region) | Where-Object {$_.backupsetName -eq "defaultBackupSet"}
 $vmtable = CV-ListVMs -Token $token -CSName $inputParam.CSName -subclients $subclients -VSA $inputParam.vsa.$($inputParam.region)
+$EndMs = Get-Date
+
+Write-Debug ("Data collection took: " + $($EndMs - $StartMs).TotalSeconds  + " seconds")
+
+
+$StartMs = Get-Date
 $thisvm = $vmtable | Where-Object {$_.displayName -eq $inputParam.vmName}
-$thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName
+
+#Add copy precendence choosing
+<#
+If DR scenario = last (or look for DR in name)
+
+RT:
+If Filer = 1
+If else = "Primary"
+
+#>
+
+
+$thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName -CopyPrecedence "0"
 
 [String]$managed = [boolean]$thisvm.advancedData.browseMetaData.virtualServerMetaData.managedVM.ToString()
 
@@ -283,120 +460,8 @@ $restoreParam = @{
     #NIC/NSG
 }
 
-[xml]$restorexml = Get-Content .\VMRestoreTemplate.xml
+PrepareRestoreXML -inputParam $inputParam -browseData $browseData -restoreParam $restoreParam
 
+$EndMs = Get-Date
 
-##
-#New (restore) parameters
-
-$restorexml.TMMsg_CreateTaskReq.taskInfo.associations.subclientName = $browseData.subclientName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.associations.backupsetName = $browseData.backupsetName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.associations.instanceName = $browseData.instanceName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.associations.appName = $browseData.appName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.associations.clientName = $browseData.vsa
-
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.backupsetName = $browseData.backupsetName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.instanceName = $browseData.instanceName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.appName = $browseData.appName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.backupset.clientName = $browseData.vmName
-
-#$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.timeZone = ??
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.destination.destClient.clientName = $restoreParam.proxyName
-
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.esxServerName = $restoreParam.subscription.$($inputParam.region)
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.guid = $browseData.vmGuid
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.name = $browseData.vmName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.newName = $restoreParam.vmNewName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.esxHost = $restoreParam.resourceGroup
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.Datastore = $restoreParam.datastore
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.vmSize = $browseData.vmSize
-
-#for each disk browsed:
-<#
-$diskCount = 0;
-foreach ($file in $thisvmbrowse){
-    if ($file.name -notlike '*.json') { 
-        $diskCount++;
-    }
-}
-
-
-for ($i=1;$i -lt $diskCount;$i++){
-    $diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks.Clone()
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.AppendChild($diskNode)
-}
-#>
-
-$diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks.Clone()
-foreach ($file in $browseData.disks){
-    if ($file.name -notlike '*.json'){
-        $diskNode.name = $file.name
-        $diskNode.datastore = $restoreParam.datastore
-        $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.AppendChild($diskNode) | Out-Null
-        $diskNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks[0].Clone()
-    }
-}
-$diskNodeZero = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.disks[0]
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.RemoveChild($diskNodeZero) | Out-Null
-
-#nics // Static
-<#
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.name = Restored NIC adress : subscription etc
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkName = Azure Network
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.subnetId = address
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkDisplayName = 
-
-#NSG // Static
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupId = NSG_ID
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupName = NSG NAME
-#>
-
-#Managed VM ??
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.restoreAsManagedVM = $browseData.vmManaged
-
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.instanceName = $browseData.instanceName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.appName = $browseData.appName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.vCenterInstance.clientName = $browseData.vsa
-
-#fileoptions:
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.fileOption.sourceItem = $browseData.path
-#$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.fileOption.browseFilters = ?? Probably dont use
-
-#VM node:
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].browsePath = $browseData.vmName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmGUID = $browseData.vmGuid
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].esxHost = $restoreParam.resourceGroup
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].datastore = $restoreParam.datastore
-#$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics = Same restored info for every NIC
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmDataStore = $restoreParam.datastore
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmEsxHost = $restoreParam.resourceGroup
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].DisplayName = $browseData.vmName
-$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].diskType = 0
-
-$diskBrowseNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[1]
-
-#file Nodes
-foreach ($file in $browseData.disks){
-        $diskBrowseNode.browsePath = $file.displayPath.Substring(1)
-        $diskBrowseNode.vmGUID = $browseData.vmGuid
-
-        if ($file.name -like '*json'){
-            $diskBrowseNode.vmDataStore = $browseData.vmDataStore
-            $diskBrowseNode.esxHost = ""
-            $diskBrowseNode.datastore = ""
-        }
-        else {
-            $diskBrowseNode.vmDataStore = $restoreParam.datastore
-            $diskBrowseNode.esxHost = $browseData.vmResourceGroup
-            $diskBrowseNode.datastore =  $restoreParam.datastore
-        }
-        $diskBrowseNode.vmEsxHost = $browseData.vmResourceGroup
-        $diskBrowseNode.isDriveNode = 'false'
-        $diskBrowseNode.isMetadataAvaiable = 'true'
-        $diskBrowseNode.DisplayName = $file.displayName
-        $diskBrowseNode.diskType = $file.advancedData.browseMetaData.virtualServerMetaData.diskType
-        $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.AppendChild($diskBrowseNode) | Out-Null
-        $diskBrowseNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[1].Clone()
-}
-
-$restorexml.Save(".\RecreatedXML_BENL.xml")
+Write-Debug ("Restore task creation took: " + $($EndMs - $StartMs).TotalSeconds + " seconds")
