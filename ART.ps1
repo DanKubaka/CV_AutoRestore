@@ -1,5 +1,5 @@
 #Requires -Version 6.0
-$DebugPreference = "Continue"
+$VerbosePreference="Continue"
 Set-Location 'C:\Users\kubaka\OneDrive - Danone\_Repositories\AutoRestoreTest'
 
 function CV-Login {
@@ -27,7 +27,7 @@ function CV-Login {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Logged in, it took " + $milliseconds + "ms")
+    Write-Verbose ("Logged in, it took " + $milliseconds + "ms")
     return $Result.token
 }
 
@@ -52,7 +52,7 @@ function CV-SubclientProperties {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Subclient properties received, it took " + $milliseconds + "ms")
+    Write-Verbose ("Subclient properties received, it took " + $milliseconds + "ms")
 
     return $subclientProps
 }
@@ -78,7 +78,7 @@ function CV-StoragePolicyDetails {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Storage Policy details received, it took " + $milliseconds + "ms")
+    Write-Verbose ("Storage Policy details received, it took " + $milliseconds + "ms")
 
     return $storagePolicyDetails
 }
@@ -105,7 +105,7 @@ function CV-ListSubclients {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Subclients listed, it took " + $milliseconds + "ms")
+    Write-Verbose ("Subclients listed, it took " + $milliseconds + "ms")
 
     $subctable = New-Object System.Collections.ArrayList
     foreach ($subc in $clientbrowse.subClientProperties){
@@ -151,7 +151,7 @@ function CV-BrowseSubclient {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Subclient browsed, it took " + $milliseconds + "ms")
+    Write-Verbose ("Subclient browsed, it took " + $milliseconds + "ms")
 
     return $data.databrowse_BrowseResponseList.browseResponses[0].browseResult.dataResultSet
 }
@@ -211,7 +211,7 @@ function CV-BrowseVM {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("VM browsed, it took " + $milliseconds + "ms")
+    Write-Verbose ("VM browsed, it took " + $milliseconds + "ms")
 
     return $data.databrowse_BrowseResponseList.browseResponses[0].browseResult.dataResultSet
 }
@@ -366,7 +366,7 @@ function CV-RestoreVM {
     $milliseconds = $timeTaken.TotalMilliseconds
     $milliseconds = [Math]::Round($milliseconds, 1)
 
-    Write-Debug ("Restore task created, it took " + $milliseconds + "ms")
+    Write-Verbose ("Restore task created, it took " + $milliseconds + "ms")
 
     return $resp
 }
@@ -394,7 +394,7 @@ $inputParam = @{
             BENL = "wfrparnli001"
         } #DR bedzie nowy, RT: osobno kazdy
         #resourceGroup = "...RestoreTests"
-        datastore = "danplpsta998lrs" #DR: nowy pojedynczy, RT: konkretny z regionu pod RT
+        datastore = "danplpsta998lrs" #DR: nowy pojedynczy, RT: konkretny z regionu pod RT # jesli filer -> ten sam datastore co poprzednio
     }
 }
 
@@ -406,24 +406,46 @@ $subclients = CV-ListSubclients -Token $token -CSName $inputParam.CSName -VSA $i
 $vmtable = CV-ListVMs -Token $token -CSName $inputParam.CSName -subclients $subclients -VSA $inputParam.vsa.$($inputParam.region)
 $EndMs = Get-Date
 
-Write-Debug ("Data collection took: " + $($EndMs - $StartMs).TotalSeconds  + " seconds")
+Write-Verbose ("Data collection took: " + $($EndMs - $StartMs).TotalSeconds  + " seconds")
 
 
 $StartMs = Get-Date
 $thisvm = $vmtable | Where-Object {$_.displayName -eq $inputParam.vmName}
 
+if ($thisvm){
+    Write-Verbose "VM found"
+}
+else{
+    Write-Verbose "VM not found"
+    Write-Error "VM not found"
+    exit
+}
+
 #Add copy precendence choosing
 <#
-If DR scenario = last (or look for DR in name)
+Weak Filer check 
 
-RT:
-If Filer = 1
-If else = "Primary"
+if($inputParam.vmName.Substring($inputParam.vmName.Length-4,1) -eq "f"{
+    $filer = 1
+}
 
 #>
+$copyPrecedence = "0"
+if (0<#DRP#>){
+    $copyPrecedence = $($thisvm.subClient.dataBackupStoragePolicy.copies | Where-Object {$_.storagePolicyCopy.copyName -match 'DRP'}).copyPrecedence
+}
+else{
+    if (0<#filer#>){
+        $copyPrecedence = $($thisvm.subClient.dataBackupStoragePolicy.copies | Where-Object {$_.storagePolicyCopy.copyName -match 'snap'}).copyPrecedence
+        #same datastore
+    }
+    else {
+        $copyPrecedence = $($thisvm.subClient.dataBackupStoragePolicy.copies | Where-Object {$_.storagePolicyCopy.copyName -like 'Primary'}).copyPrecedence
+    }
+}
 
 
-$thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName -CopyPrecedence "0"
+$thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName -CopyPrecedence $copyPrecedence
 
 [String]$managed = [boolean]$thisvm.advancedData.browseMetaData.virtualServerMetaData.managedVM.ToString()
 
@@ -464,4 +486,8 @@ PrepareRestoreXML -inputParam $inputParam -browseData $browseData -restoreParam 
 
 $EndMs = Get-Date
 
-Write-Debug ("Restore task creation took: " + $($EndMs - $StartMs).TotalSeconds + " seconds")
+Write-Verbose ("Restore job creation took: " + $($EndMs - $StartMs).TotalSeconds + " seconds")
+
+
+
+$VerbosePreference="SilentlyContinue"
