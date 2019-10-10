@@ -280,13 +280,13 @@ function PrepareRestoreXML {
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.RemoveChild($diskNodeZero) | Out-Null
     
     #nics // Static
-    <#
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.name = Restored NIC adress : subscription etc
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkName = Azure Network
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.subnetId = address
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkDisplayName = 
     
-    #NSG // Static
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.name = $restoreParam.nic.Name
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkName = $restoreParam.nic.networkName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.subnetId = $restoreParam.nic.subnetID
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.nics.networkDisplayName = $restoreParam.nic.networkDisplayName
+    
+    <#NSG // Static
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupId = NSG_ID
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.securityGroups.groupName = NSG NAME
     #>
@@ -307,7 +307,10 @@ function PrepareRestoreXML {
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmGUID = $browseData.vmGuid
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].esxHost = $restoreParam.resourceGroup
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].datastore = $restoreParam.datastore
-    #$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics = Same restored info for every NIC
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics.name = $restoreParam.nic.Name
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics.networkName = $restoreParam.nic.networkName
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics.subnetID = $restoreParam.nic.subnetID
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].nics.networkDisplayName = $restoreParam.nic.networkDisplayName
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmDataStore = $restoreParam.datastore
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].vmEsxHost = $restoreParam.resourceGroup
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[0].DisplayName = $browseData.vmName
@@ -340,7 +343,7 @@ function PrepareRestoreXML {
     }
     
     $restorexml.Save(".\RecreatedXML_BENL.xml")
-
+    return $restorexml
 }
 
 function CV-RestoreVM {
@@ -444,10 +447,14 @@ else{
     }
 }
 
-
+## BROWSING VM
 $thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName -CopyPrecedence $copyPrecedence
+######
 
+
+#Prepare parameters
 [String]$managed = [boolean]$thisvm.advancedData.browseMetaData.virtualServerMetaData.managedVM.ToString()
+$nics = $([xml]$thisvm.advancedData.browseMetaData.virtualServerMetaData.nics).IdxMetadata_VMNetworks.nic
 
 $browseData =@{
     subclientName = $thisvm.subClient.subclientName
@@ -463,7 +470,22 @@ $browseData =@{
     vmManaged = $managed
     vsa = $inputParam.vsa.$($inputParam.region)
     disks = $thisvmbrowse
+    nics = $nics    
 }
+
+$resourceGroup = $thisvm.advancedData.browseMetaData.virtualServerMetaData.esxHost -replace "-P-", "-R-"
+
+$restorenic = $nics
+$restorenic.subnet = $restorenic.subnet -replace "-P-", "-R-"
+$tempA = $restorenic.subnet.Split("/virtualNetworks/")
+$tempB = $tempA[1].Split("/subnets/")
+$tempC = $restorenic.subnet.Split("/subnets")
+
+$nicName = $tempC[0]
+$networkName = $tempB[0]
+$subnetName = $tempB[1]
+$subnetId = $restorenic.subnet
+
 
 $restoreParam = @{
     subscription = @{
@@ -474,20 +496,23 @@ $restoreParam = @{
         DACH = "122aa6f7-3063-408a-875f-77dfb5af533f"
         BENL = "6de6133f-ee8f-48ac-abfe-06b9b0f9e138"
         }
-    resourceGroup = $thisvm.advancedData.browseMetaData.virtualServerMetaData.esxHost -replace "-P-", "-R-"
+    resourceGroup = $resourceGroup
     #resourceGroup = $inputParam.restore.resourceGroup
-    vmNewName = "RT" + $inputParam.vmName
+    vmNewName = "RT" + $inputParam.vmName #the same if DR
     datastore = $inputParam.restore.datastore
     proxyName = $inputParam.restore.proxyName.$($inputParam.region)
-    #NIC/NSG
+    nic = @{
+        Name = $nicName
+        networkName = $networkName
+        subnetID = $subnetId
+        networkDisplayName = $networkName + "\" + $subnetName 
+    }
 }
 
-PrepareRestoreXML -inputParam $inputParam -browseData $browseData -restoreParam $restoreParam
+$restorexml = PrepareRestoreXML -inputParam $inputParam -browseData $browseData -restoreParam $restoreParam
 
 $EndMs = Get-Date
 
 Write-Verbose ("Restore job creation took: " + $($EndMs - $StartMs).TotalSeconds + " seconds")
-
-
 
 $VerbosePreference="SilentlyContinue"
