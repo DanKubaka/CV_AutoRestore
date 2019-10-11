@@ -218,7 +218,6 @@ function CV-BrowseVM {
 
 function PrepareRestoreXML {
     param (
-        $inputParam,
         $browseData,
         $restoreParam
     )
@@ -243,7 +242,7 @@ function PrepareRestoreXML {
     #$restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.browseOption.timeZone = ??
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.destination.destClient.clientName = $restoreParam.proxyName
     
-    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.esxServerName = $restoreParam.subscription.$($inputParam.region)
+    $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.esxServerName = $restoreParam.subscription
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.guid = $browseData.vmGuid
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.name = $browseData.vmName
     $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.restoreOptions.virtualServerRstOption.diskLevelVMRestoreOption.advancedRestoreOptions.newName = $restoreParam.vmNewName
@@ -342,7 +341,7 @@ function PrepareRestoreXML {
             $diskBrowseNode = $restorexml.TMMsg_CreateTaskReq.taskInfo.subTasks.options.vmBrowsePathNodes[1].Clone()
     }
     
-    $restorexml.Save(".\RecreatedXML_BENL.xml")
+    $restorexml.Save(".\RecreatedXML_" + $browseData.vmName + ".xml")
     return $restorexml
 }
 
@@ -376,9 +375,11 @@ function CV-RestoreVM {
 
 $inputParam = @{
     cred = Import-Clixml -Path $HOME\adm.cred
-    csName = 'Dancommserve'
-    vmName = "wfrparnlb030"
-    region = "BENL"
+    csName = 'dancommserve'
+    vmName = "wplwarb063sad"
+    region = "NCE"
+    DRP = 0
+    filer = 0
     vsa = @{
         NCE = "VSA_EU_NCE"
         EE = "VSA_EU_EE"
@@ -386,6 +387,7 @@ $inputParam = @{
         UKI = "VSA_EU_UKI"
         DACH = "VSA_EU_DACH"
         BENL = "VSA_EU_BENL"
+        LAB = "VSA_EU_LAB"
     }
     restore = @{
         proxyName = @{
@@ -395,9 +397,18 @@ $inputParam = @{
             UKI = "wfrparuki001"
             DACH = "wfrpardei001"
             BENL = "wfrparnli001"
-        } #DR bedzie nowy, RT: osobno kazdy
-        #resourceGroup = "...RestoreTests"
-        datastore = "danplpsta998lrs" #DR: nowy pojedynczy, RT: konkretny z regionu pod RT # jesli filer -> ten sam datastore co poprzednio
+            LAB = "wfrparwwi026"
+        } #DR will be new, RT: separate
+        subscription =@{
+            NCE = "7cbc458e-c416-4ce8-bece-d8e3e403b5a0"
+            EE = "ccbcdedf-1910-43ba-a3ad-467ee1157c76"
+            MEESA = "dcd04b65-2843-4939-9b25-f9fca97e80da"
+            UKI = "65a414a4-300b-468d-85e1-6c338e1acd7b"
+            DACH = "122aa6f7-3063-408a-875f-77dfb5af533f"
+            BENL = "6de6133f-ee8f-48ac-abfe-06b9b0f9e138"
+            LAB = "28d1038a-f530-41d1-9c6e-4c37c89d36ab"
+        }
+        datastore = "danplpsta998lrs" #DR: new in DR; RT: each region seperate, created specially for RT; if filer -> same datastore that vm was on
     }
 }
 
@@ -405,14 +416,15 @@ $StartMs = Get-Date
 
 $token = CV-Login -Cred $inputParam.Cred -CSName $inputParam.CSName
 
+#Assumption: VMs are always in defaultBackupSet
 $subclients = CV-ListSubclients -Token $token -CSName $inputParam.CSName -VSA $inputParam.vsa.$($inputParam.region) | Where-Object {$_.backupsetName -eq "defaultBackupSet"}
 $vmtable = CV-ListVMs -Token $token -CSName $inputParam.CSName -subclients $subclients -VSA $inputParam.vsa.$($inputParam.region)
 $EndMs = Get-Date
 
 Write-Verbose ("Data collection took: " + $($EndMs - $StartMs).TotalSeconds  + " seconds")
 
-
 $StartMs = Get-Date
+#Assumption: In defaultBackupSet VM is only in one subclient
 $thisvm = $vmtable | Where-Object {$_.displayName -eq $inputParam.vmName}
 
 if ($thisvm){
@@ -424,7 +436,6 @@ else{
     exit
 }
 
-#Add copy precendence choosing
 <#
 Weak Filer check 
 
@@ -434,11 +445,11 @@ if($inputParam.vmName.Substring($inputParam.vmName.Length-4,1) -eq "f"{
 
 #>
 $copyPrecedence = "0"
-if (0<#DRP#>){
+if ($inputParam.DRP){
     $copyPrecedence = $($thisvm.subClient.dataBackupStoragePolicy.copies | Where-Object {$_.storagePolicyCopy.copyName -match 'DRP'}).copyPrecedence
 }
 else{
-    if (0<#filer#>){
+    if ($inputParam.filer){
         $copyPrecedence = $($thisvm.subClient.dataBackupStoragePolicy.copies | Where-Object {$_.storagePolicyCopy.copyName -match 'snap'}).copyPrecedence
         #same datastore
     }
@@ -455,6 +466,27 @@ $thisvmbrowse = CV-BrowseVM -VM $thisvm -Token $token -CSName $inputParam.CSName
 #Prepare parameters
 [String]$managed = [boolean]$thisvm.advancedData.browseMetaData.virtualServerMetaData.managedVM.ToString()
 $nics = $([xml]$thisvm.advancedData.browseMetaData.virtualServerMetaData.nics).IdxMetadata_VMNetworks.nic
+
+$resourceGroup = $thisvm.advancedData.browseMetaData.virtualServerMetaData.esxHost -replace "-P-", "-R-"
+
+$restorenic = $nics
+$restorenic.subnet = $restorenic.subnet -replace "-P-", "-R-"
+$tempA = $restorenic.subnet.Split("/virtualNetworks/")
+$tempB = $tempA[1].Split("/subnets/")
+$tempC = $restorenic.subnet.Split("/subnets")
+
+$nicName = $tempC[0]
+$networkName = $tempB[0]
+$subnetName = $tempB[1]
+$subnetId = $restorenic.subnet
+
+if($inputParam.DRP){
+    $vmNewName = $restoreParam.vmNewName = $inputParam.vmName
+}
+else {
+    $vmNewName = "RT" + $inputParam.vmName
+}
+
 
 $browseData =@{
     subclientName = $thisvm.subClient.subclientName
@@ -473,32 +505,11 @@ $browseData =@{
     nics = $nics    
 }
 
-$resourceGroup = $thisvm.advancedData.browseMetaData.virtualServerMetaData.esxHost -replace "-P-", "-R-"
-
-$restorenic = $nics
-$restorenic.subnet = $restorenic.subnet -replace "-P-", "-R-"
-$tempA = $restorenic.subnet.Split("/virtualNetworks/")
-$tempB = $tempA[1].Split("/subnets/")
-$tempC = $restorenic.subnet.Split("/subnets")
-
-$nicName = $tempC[0]
-$networkName = $tempB[0]
-$subnetName = $tempB[1]
-$subnetId = $restorenic.subnet
-
-
 $restoreParam = @{
-    subscription = @{
-        NCE = "7cbc458e-c416-4ce8-bece-d8e3e403b5a0"
-        EE = "ccbcdedf-1910-43ba-a3ad-467ee1157c76"
-        MEESA = "dcd04b65-2843-4939-9b25-f9fca97e80da"
-        UKI = "65a414a4-300b-468d-85e1-6c338e1acd7b"
-        DACH = "122aa6f7-3063-408a-875f-77dfb5af533f"
-        BENL = "6de6133f-ee8f-48ac-abfe-06b9b0f9e138"
-        }
+    subscription =  $inputParam.restore.subscription.$($inputParam.region)
     resourceGroup = $resourceGroup
     #resourceGroup = $inputParam.restore.resourceGroup
-    vmNewName = "RT" + $inputParam.vmName #the same if DR
+    vmNewName = $vmNewName
     datastore = $inputParam.restore.datastore
     proxyName = $inputParam.restore.proxyName.$($inputParam.region)
     nic = @{
@@ -509,7 +520,18 @@ $restoreParam = @{
     }
 }
 
-$restorexml = PrepareRestoreXML -inputParam $inputParam -browseData $browseData -restoreParam $restoreParam
+
+
+<#Overwrite for LAB
+$restoreParam.resourceGroup = "UrbIaaS-BackupAndRecovery-LAB"
+$restoreParam.datastore = "danpldsta001lrs"
+#####>
+
+
+
+$restorexml = PrepareRestoreXML -browseData $browseData -restoreParam $restoreParam
+
+#$response = CV-RestoreVM -Token $token -CSName $inputParam.csName -restorexml $restorexml
 
 $EndMs = Get-Date
 
