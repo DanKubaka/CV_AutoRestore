@@ -376,7 +376,7 @@ function CV-RestoreVM {
 $inputParam = @{
     cred = Import-Clixml -Path $HOME\adm.cred
     csName = 'dancommserve'
-    vmName = "wplwarb063sad"
+    vmName = "wplwarb063"
     region = "NCE"
     DRP = 0
     filer = 0
@@ -431,8 +431,8 @@ if ($thisvm){
     Write-Verbose "VM found"
 }
 else{
-    Write-Verbose "VM not found"
-    Write-Error "VM not found"
+    Write-Verbose ("VM " + $inputParam.vmName + " not found in client " + $inputParam.vsa.($inputParam.region))
+    Write-Error ("VM " + $inputParam.vmName + " not found in client " + $inputParam.vsa.($inputParam.region))
     exit
 }
 
@@ -487,6 +487,12 @@ else {
     $vmNewName = "RT" + $inputParam.vmName
 }
 
+if ($inputParam.filer){
+    $restoreDatastore = $thisvm.advancedData.browseMetaData.virtualServerMetaData.datastore
+}
+else {
+    $restoreDatastore = $inputParam.restore.datastore
+}
 
 $browseData =@{
     subclientName = $thisvm.subClient.subclientName
@@ -508,9 +514,8 @@ $browseData =@{
 $restoreParam = @{
     subscription =  $inputParam.restore.subscription.$($inputParam.region)
     resourceGroup = $resourceGroup
-    #resourceGroup = $inputParam.restore.resourceGroup
     vmNewName = $vmNewName
-    datastore = $inputParam.restore.datastore
+    datastore = $restoreDatastore
     proxyName = $inputParam.restore.proxyName.$($inputParam.region)
     nic = @{
         Name = $nicName
