@@ -83,18 +83,17 @@
                   <Datastore></Datastore>
                 </disks>
                 <nics>
-                  <name>/subscriptions/7cbc458e-c416-4ce8-bece-d8e3e403b5a0/resourceGroups/DAN-PL-R-RSG999-RestoreTest/providers/Microsoft.Network/virtualNetworks/DAN-PL-R-VNT003</name>
-                  <networkName>DAN-PL-R-VNT003</networkName>
-                  <subnetId>/subscriptions/7cbc458e-c416-4ce8-bece-d8e3e403b5a0/resourceGroups/DAN-PL-R-RSG999-RestoreTest/providers/Microsoft.Network/virtualNetworks/DAN-PL-R-VNT003/subnets/DAN-PL-R-SNT006-IsolatedTest</subnetId>
+                  <name></name>
+                  <networkName></networkName>
+                  <subnetId></subnetId>
                   <sourceNetwork></sourceNetwork>
                   <destinationNetwork></destinationNetwork>
-                  <networkDisplayName>DAN-PL-R-VNT003\DAN-PL-R-SNT006-IsolatedTest</networkDisplayName>
+                  <networkDisplayName></networkDisplayName>
                   <privateIPaddress></privateIPaddress>
                   <sourceNetworkId></sourceNetworkId>
                 </nics>
                 <securityGroups>
-                  <groupId>/subscriptions/7cbc458e-c416-4ce8-bece-d8e3e403b5a0/resourceGroups/DAN-PL-R-RSG999-RestoreTest/providers/Microsoft.Network/networkSecurityGroups/DAN-PL-R-NSG999-RestoreTest</groupId>
-                  <groupName>DAN-PL-R-NSG999-RestoreTest</groupName>
+                  <groupName>--Auto Select--</groupName>
                 </securityGroups>
                 <cluster></cluster>
                 <createPublicIP>false</createPublicIP>
@@ -148,12 +147,12 @@
           <vcloudVappName></vcloudVappName>
           <vcloudOwner></vcloudOwner>
           <nics>
-            <name>/subscriptions/7cbc458e-c416-4ce8-bece-d8e3e403b5a0/resourceGroups/DAN-PL-R-RSG999-RestoreTest/providers/Microsoft.Network/virtualNetworks/DAN-PL-R-VNT003</name>
-            <networkName>DAN-PL-R-VNT003</networkName>
-            <subnetId>/subscriptions/7cbc458e-c416-4ce8-bece-d8e3e403b5a0/resourceGroups/DAN-PL-R-RSG999-RestoreTest/providers/Microsoft.Network/virtualNetworks/DAN-PL-R-VNT003/subnets/DAN-PL-R-SNT006-IsolatedTest</subnetId>
+            <name></name>
+            <networkName></networkName>
+            <subnetId></subnetId>
             <sourceNetwork></sourceNetwork>
             <destinationNetwork></destinationNetwork>
-            <networkDisplayName>DAN-PL-R-VNT003\DAN-PL-R-SNT006-IsolatedTest</networkDisplayName>
+            <networkDisplayName></networkDisplayName>
             <privateIPaddress></privateIPaddress>
             <sourceNetworkId></sourceNetworkId>
           </nics>
